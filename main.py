@@ -1,173 +1,183 @@
-
+import numpy as np
 import pandas as pd
-
-from params import (
-    SIM_CONFIG,
-    BUILDING_PARAMS,
-    VENTILATION_PARAMS,
-    ROOM_FILE_GROUPS,
-    WEATHER_FILE,
-)
-from all_functions import (
-    load_and_aggregate_room_data,
-    build_day_slices,
-    load_weather_hourly_to_dt,
-    run_monte_carlo,
-    run_h1_per_capita_test,
-    run_h2_ventilation_test,
-    validate_occupancy_bootstrap,
-    validate_co2_model,
-)
+import params
+from all_functions import  *
 
 
-def prepare_room_day_slices(room_name: str, dt_minutes: int) -> dict:
-  
-    file_group = ROOM_FILE_GROUPS[room_name]
-    print(f"  Loading & aggregating data for {room_name}: {file_group}")
-
-    df_agg = load_and_aggregate_room_data(file_group, dt_minutes=dt_minutes)
-
-    if df_agg.empty:
-        raise ValueError(
-            f"prepare_room_day_slices: aggregated DataFrame is empty for {room_name}. "
-            f"Check the input CSVs: {file_group}"
-        )
-
-    day_slices = build_day_slices(df_agg)
-
-    if not day_slices:
-        raise ValueError(
-            f"prepare_room_day_slices: no day slices created for {room_name}. "
-            "Check that 'DayID' has valid values in the aggregated data."
-        )
-
-    return day_slices
+def compute_distribution_stats(df: pd.DataFrame) -> pd.DataFrame:
+    """mean, std, min, max, skewness, kurtosis for numeric columns."""
+    stats = df.describe().T
+    stats["skewness"] = df.skew(numeric_only=True)
+    stats["kurtosis"] = df.kurtosis(numeric_only=True)
+    return stats[["mean", "std", "min", "max", "skewness", "kurtosis"]]
 
 
 def main():
-    dt_minutes = SIM_CONFIG["dt_seconds"] // 60
 
-    weather_slices = load_weather_hourly_to_dt(
-        WEATHER_FILE,
-        dt_minutes=dt_minutes,
+    # Load + merge Room1 data
+
+    file_group = params.ROOM_FILE_GROUPS["Room1"]
+    df_room1 = load_and_aggregate_room_data(file_group, dt_minutes=15)
+    df_weather = load_weather_hourly_to_dt(params.WEATHER_FILE, dt_minutes=15)
+    df_room1_w = attach_weather_to_room(df_room1, df_weather)
+
+    # Validation 1: Occupancy bootstrap (10 runs)
+
+    occ_df = validate_room1_occupancy_sampling(
+        df_room1=df_room1,
+        n_runs=10,
+        n_days=44,
     )
+    print("\n=== Validation 1: Room1 Occupancy Bootstrap Stats (10×44 days) ===")
+    print(compute_distribution_stats(occ_df))
 
-    # Monte Carlo result collectors
-    all_results_fixed = []
-    all_results_occ_based = []
+    # Validation 2: CO2 simulation sampling (10 runs)
+    co2_df = validate_room1_co2_sampling(df_room1_w, building=params.BUILDING_PARAMS["Room1"],vent_params=params.VENTILATION_PARAMS["Room1"], config=params.SIM_CONFIG,strategy="occ_based")
 
-    # Validation result collectors
-    all_occ_validation = []   
-    all_co2_validation = []   
+    print("\n=== Validation 2: Room1 CO2 Simulation Stats (10×44 days) ===")
+    print(compute_distribution_stats(co2_df))
 
-    for room_name in ROOM_FILE_GROUPS.keys():
-        print(f"Processing {room_name}...")
 
-       #per-room time series
- 
-        day_slices_room = prepare_room_day_slices(room_name, dt_minutes)
+    # Monte Carlo runs for hypotheses (fixed vs occ_based)
 
-      
-        # 2) Validation: Occupancy bootstrap
-      
-        print(f" Validating occupancy bootstrap for {room_name}...")
-        df_occ_val = validate_occupancy_bootstrap(
-            day_slices=day_slices_room,
-            config=SIM_CONFIG,
-            n_mc_runs=100,
-            seed=123,
-        )
-        df_occ_val["room"] = room_name
-        all_occ_validation.append(df_occ_val)
+    rooms = ["Room1", "Room2", "Room3"]
+    cap_map = {"Room1": 84, "Room2": 32, "Room3": 32}
+    df_weather = load_weather_hourly_to_dt(params.WEATHER_FILE, dt_minutes=15)
+    # Load + attach weather per room
+    room_df = {}
+    for r in rooms:
+        df_r = load_and_aggregate_room_data(params.ROOM_FILE_GROUPS[r], dt_minutes=15)
+        df_rw = attach_weather_to_room(df_r, df_weather)
+        room_df[r] = df_rw
 
-        # 3) Validation: CO2 model 
-  
-        print(f"  Validating CO2 model for {room_name}...")
-        for day_id, df_day in day_slices_room.items():
-            if day_id not in weather_slices:
-                print(f" no weather data for DayID={day_id}, skipping.")
-                continue
+    n_runs = int(params.SIM_CONFIG["n_runs"])
+    n_days = int(params.SIM_CONFIG["n_days_per_run"])
 
-            T_out_day = weather_slices[day_id]
-            T_out_day = T_out_day[: len(df_day)]  
+    # Pre-sample day sequences
+    sampled_days_by_room = {
+        r: [sample_day_ids(room_df[r], n_days=n_days, replace=True) for _ in range(n_runs)]
+        for r in rooms
+    }
 
-            df_co2_val = validate_co2_model(
-                df_day=df_day,
-                T_out_day=T_out_day,
-                building=BUILDING_PARAMS[room_name],
-                vent_params=VENTILATION_PARAMS[room_name],
-                config=SIM_CONFIG,
-                strategy="occ_based",
+    sum_cols = ["E_heat_kWh", "E_cool_kWh", "E_plug_kWh", "E_light_kWh",
+                "E_total_kWh", "CO2_exceed_hours", "mean_occupancy"]
+
+    # H1: baseline vs increased occupancy (FIXED ventilation)
+
+    mult = 1.50  # example +20%
+
+    base_room_results = []
+    treat_room_results = []
+
+    for r in rooms:
+        base_room_results.append(
+            run_room_mc_with_samples(
+                df_room_with_weather=room_df[r],
+                building=params.BUILDING_PARAMS[r],
+                vent_params=params.VENTILATION_PARAMS[r],
+                config=params.SIM_CONFIG,
+                strategy="fixed",
+                sampled_days_list=sampled_days_by_room[r],
+                occ_multiplier=1.0,
+                occ_cap=cap_map[r],
             )
-            df_co2_val["room"] = room_name
-            df_co2_val["DayID"] = day_id
-            all_co2_validation.append(df_co2_val)
-
-    
-        # Monte Carlo: Fixed ventilation
-    
-        print(f"Running Monte Carlo (fixed ventilation) for {room_name}...")
-        df_fixed = run_monte_carlo(
-            day_slices=day_slices_room,
-            weather_slices=weather_slices,
-            building=BUILDING_PARAMS[room_name],
-            vent_params=VENTILATION_PARAMS[room_name],
-            config=SIM_CONFIG,
-            strategy="fixed",
-            seed=42,
         )
-        df_fixed["room"] = room_name
-        all_results_fixed.append(df_fixed)
-
-        # Monte Carlo: Occupancy-based ventilation
-
-        print(f"  Running Monte Carlo (occ-based ventilation) for {room_name}...")
-        df_occ_based = run_monte_carlo(
-            day_slices=day_slices_room,
-            weather_slices=weather_slices,
-            building=BUILDING_PARAMS[room_name],
-            vent_params=VENTILATION_PARAMS[room_name],
-            config=SIM_CONFIG,
-            strategy="occ_based",
-            seed=43,
-        )
-        df_occ_based["room"] = room_name
-        all_results_occ_based.append(df_occ_based)
-
-
-    df_fixed_all = pd.concat(all_results_fixed, ignore_index=True)
-    df_occ_based_all = pd.concat(all_results_occ_based, ignore_index=True)
-
-    df_fixed_all.to_csv("mc_results_all_rooms_fixed.csv", index=False)
-    df_occ_based_all.to_csv("mc_results_all_rooms_occ_based.csv", index=False)
-
-    if all_occ_validation:
-        df_occ_val_all = pd.concat(all_occ_validation, ignore_index=True)
-        df_occ_val_all.to_csv(
-            "validation_occupancy_bootstrap_all_rooms.csv",
-            index=False,
+        treat_room_results.append(
+            run_room_mc_with_samples(
+                df_room_with_weather=room_df[r],
+                building=params.BUILDING_PARAMS[r],
+                vent_params=params.VENTILATION_PARAMS[r],
+                config=params.SIM_CONFIG,
+                strategy="fixed",
+                sampled_days_list=sampled_days_by_room[r],
+                occ_multiplier=mult,
+                occ_cap=cap_map[r],
+            )
         )
 
-    if all_co2_validation:
-        df_co2_val_all = pd.concat(all_co2_validation, ignore_index=True)
-        df_co2_val_all.to_csv(
-            "validation_co2_timeseries_all_rooms.csv",
-            index=False,
+    df_base = pd.concat(base_room_results, ignore_index=True)
+    df_treat = pd.concat(treat_room_results, ignore_index=True)
+
+    base_tot = df_base.groupby("run", as_index=False)[sum_cols].sum()
+    treat_tot = df_treat.groupby("run", as_index=False)[sum_cols].sum()
+
+    base_tot["E_per_capita"] = base_tot["E_total_kWh"] / base_tot["mean_occupancy"]
+    treat_tot["E_per_capita"] = treat_tot["E_total_kWh"] / treat_tot["mean_occupancy"]
+
+    h1_compare = pd.DataFrame({
+    "run": base_tot["run"],
+    "E_per_capita_baseline": base_tot["E_per_capita"].to_numpy(),
+    "E_per_capita_treatment": treat_tot["E_per_capita"].to_numpy(),
+})
+
+
+    print("\nSummary (baseline):")
+    print(h1_compare["E_per_capita_baseline"].describe(percentiles=[0.05, 0.5, 0.95]))
+
+    print("\nSummary (treatment):")
+    print(h1_compare["E_per_capita_treatment"].describe(percentiles=[0.05, 0.5, 0.95]))
+
+
+    diff = treat_tot["E_per_capita"] - base_tot["E_per_capita"]
+
+    print("\n=== H1 (Building total, FIXED): Increased occupancy vs baseline ===")
+    print(f"Occupancy multiplier = {mult} (capped by seating)")
+    print(diff.describe(percentiles=[0.05, 0.5, 0.95]))
+
+
+    # H2: fixed vs occ_based (baseline occupancy)
+
+    fixed_room_results = []
+    occ_room_results = []
+
+    for r in rooms:
+        fixed_room_results.append(
+            run_room_mc_with_samples(
+                df_room_with_weather=room_df[r],
+                building=params.BUILDING_PARAMS[r],
+                vent_params=params.VENTILATION_PARAMS[r],
+                config=params.SIM_CONFIG,
+                strategy="fixed",
+                sampled_days_list=sampled_days_by_room[r],
+                occ_multiplier=1.0,
+                occ_cap=cap_map[r],
+            )
+        )
+        occ_room_results.append(
+            run_room_mc_with_samples(
+                df_room_with_weather=room_df[r],
+                building=params.BUILDING_PARAMS[r],
+                vent_params=params.VENTILATION_PARAMS[r],
+                config=params.SIM_CONFIG,
+                strategy="occ_based",
+                sampled_days_list=sampled_days_by_room[r],
+                occ_multiplier=1.0,
+                occ_cap=cap_map[r],
+            )
         )
 
-    df_h1_fixed = run_h1_per_capita_test(df_fixed_all)
-    df_h1_fixed.to_csv("h1_per_capita_fixed.csv", index=False)
+    df_fixed = pd.concat(fixed_room_results, ignore_index=True)
+    df_occ = pd.concat(occ_room_results, ignore_index=True)
 
-    df_h1_occ = run_h1_per_capita_test(df_occ_based_all)
-    df_h1_occ.to_csv("h1_per_capita_occ_based.csv", index=False)
+    fixed_tot = df_fixed.groupby("run", as_index=False)[sum_cols].sum()
+    occ_tot = df_occ.groupby("run", as_index=False)[sum_cols].sum()
 
-    df_h2 = run_h2_ventilation_test(df_fixed_all, df_occ_based_all)
-    df_h2.to_csv("h2_ventilation_comparison.csv", index=False)
+    fixed_tot["strategy"] = "fixed"
+    occ_tot["strategy"] = "occ_based"
 
-    print("Saved Monte Carlo, validation, and hypothesis-testing results.")
+    h2_tot = pd.concat([fixed_tot, occ_tot], ignore_index=True)
+
+    print("\n=== H2 (Building total): Fixed vs Occ-based ===")
+    print(h2_tot.groupby("strategy")[["CO2_exceed_hours", "E_total_kWh"]].describe())
+
+    # Save only totals (as you requested)
+    base_tot.to_csv("H1_baseline_building.csv", index=False)
+    treat_tot.to_csv("H1_treatment_building.csv", index=False)
+    h2_tot.to_csv("H2_building_totals.csv", index=False)
+    print("\nSaved: H1_baseline_building.csv, H1_treatment_building.csv, H2_building_totals.csv")
 
 
 if __name__ == "__main__":
     main()
 
-#AI Disclosure: AI assistance was used for debugging and code suggestions in this file. Where and how will be outlined later
+#AI Disclosure: ChatGPT assistance was used for debugging and code suggestions in this project. Google AI studio was used for doctest help.

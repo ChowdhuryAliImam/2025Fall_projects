@@ -1,5 +1,6 @@
 
-
+rho = 1.2
+cp = 1005.0
 # Simulation config (shared for all rooms) 
 SIM_CONFIG = {
     "dt_seconds": 900,        
@@ -11,7 +12,7 @@ SIM_CONFIG = {
 # Building parameters per room (as dicts)
 BUILDING_PARAMS = {
     "Room1": {
-        "V": 200.0,          
+        "V": 461.48,         
         "UA": 150.0,         
         "T_set": 22.0,       
         "eta_heat": 0.95,
@@ -23,7 +24,7 @@ BUILDING_PARAMS = {
         "P_light": 400.0,    
     },
     "Room2": {
-        "V": 150.0,
+        "V": 418.75,
         "UA": 120.0,
         "T_set": 22.0,
         "eta_heat": 0.95,
@@ -35,7 +36,7 @@ BUILDING_PARAMS = {
         "P_light": 300.0,
     },
     "Room3": {
-        "V": 180.0,
+        "V": 418.75,
         "UA": 130.0,
         "T_set": 22.0,
         "eta_heat": 0.95,
@@ -43,27 +44,27 @@ BUILDING_PARAMS = {
         "q_person": 75.0,
         "G_CO2": 0.000005,
         "C_out": 420.0,
-        "P_plug": 450.0,
-        "P_light": 350.0,
+        "P_plug": 400.0,
+        "P_light": 300.0,
     },
 }
 
 # Ventilation parameters per room
 VENTILATION_PARAMS = {
     "Room1": {
-        "Vdot_fixed": 0.2,        
-        "Vdot_base": 0.05,        
+        "Vdot_fixed": 0.923,        
+        "Vdot_base": 0.0834,        
         "Vdot_per_person": 0.01,   
     },
     "Room2": {
-        "Vdot_fixed": 0.18,
-        "Vdot_base": 0.05,
+        "Vdot_fixed": 0.331,
+        "Vdot_base": 0.075,
         "Vdot_per_person": 0.01,
     },
     "Room3": {
-        "Vdot_fixed": 0.22,
-        "Vdot_base": 0.06,
-        "Vdot_per_person": 0.012,
+        "Vdot_fixed": 0.331,
+        "Vdot_base": 0.075,
+        "Vdot_per_person": 0.01,
     },
 }
 
