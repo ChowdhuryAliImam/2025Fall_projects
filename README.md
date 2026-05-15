@@ -18,9 +18,9 @@ The measured carbon-di-oxide concentration is also compared with the original da
 
 ----------------------------------------------------------------------------------------------------
 Hypothesis:
-As average occupancy increases, the per-capita energy consumption decreases
+1. As average occupancy increases, the per-capita energy consumption decreases
 
-Compared to fixed ventilation, occupancy-based ventilation will reduce CO₂ exceedance hours and energy use.
+2. Compared to fixed ventilation, occupancy-based ventilation will reduce CO₂ exceedance hours and energy use.
 
 -----------------------------------------------------------------------------------------------------
 RUN the SIMULATION
