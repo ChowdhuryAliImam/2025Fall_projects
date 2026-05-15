@@ -23,7 +23,7 @@ As average occupancy increases, the per-capita energy consumption decreases
 Compared to fixed ventilation, occupancy-based ventilation will reduce CO₂ exceedance hours and energy use.
 
 -----------------------------------------------------------------------------------------------------
-=====================================run the simulatio===============================================
+RUN the SIMULATION
 download Data, params, all_functions and main. run main.
 
 ------------------------------------------------------------------------------------------------------
