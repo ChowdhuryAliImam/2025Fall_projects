@@ -29,8 +29,9 @@ download Data, params, all_functions and main. run main.
 ------------------------------------------------------------------------------------------------------
 result: 
 Hypothesis 1: Increased mean occupancy decreased the per capita energy consumption:
-<img width="1000" height="750" alt="image" src="https://github.com/user-attachments/assets/9d35e1fc-871e-403e-9113-e7d95b40770b" />
+<img width="833.33333333" height="625" alt="image" src="https://github.com/user-attachments/assets/9d35e1fc-871e-403e-9113-e7d95b40770b" />
 Hypothesis 2:Neither of the strategy increase carbon-di-oxide exceedance hours but occupancy based ventilation reduced energy use
 <img width="833" height="625" alt="image" src="https://github.com/user-attachments/assets/2a672c0d-46b7-4f07-9a85-1b57e08eeaea" />
-<img width="833" height="625" alt="image" src="https://github.com/user-attachments/assets/e1fa067f-a365-4d6c-9d3d-8fb2c1b2859b" />
+<img width="833.3333333" height="625" alt="image" src="https://github.com/user-attachments/assets/f1d32a3c-4953-4721-8105-af2ddd7b4319" />
+
 
